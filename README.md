@@ -44,9 +44,10 @@ curl -X POST http://localhost:3000/landbot/webhook \
 The repo deploys to Vercel as-is: Vercel detects the Express app in
 `src/server.js` and runs it as a serverless function.
 
-1. **Merge into `main` first.** Vercel publishes the `main` branch at your
-   public URL. Other branches get preview links that sit behind a Vercel login,
-   so Landbot can't call them.
+1. **Check the production branch.** Vercel publishes the repo's default branch
+   at your public URL. Other branches get preview links that sit behind a
+   Vercel login, so Landbot can't call them. Make sure the code is on the
+   default branch (GitHub → Settings → General → Default branch).
 2. Go to https://vercel.com/new, choose **Import Git Repository**, and pick
    `NewWestMusic/ai-whatsapp-agent`. Leave the framework and build settings as detected.
 3. Under **Environment Variables**, add:
@@ -63,7 +64,7 @@ The repo deploys to Vercel as-is: Vercel detects the Express app in
 7. Visit `https://YOUR-PROJECT.vercel.app/health`. It should show `{"ok":true}`.
    Your Landbot webhook URL is `https://YOUR-PROJECT.vercel.app/landbot/webhook`.
 
-After this, every push to `main` redeploys automatically, including edits to
+After this, every push to the default branch redeploys automatically, including edits to
 `knowledge.md`.
 
 ## 3. Set up Landbot
