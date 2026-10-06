@@ -1,0 +1,19 @@
+{
+  "name": "ai-whatsapp-agent",
+  "version": "1.0.0",
+  "description": "AI brain for a Landbot WhatsApp bot, powered by Claude",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node --env-file-if-exists=.env src/server.js",
+    "dev": "node --watch --env-file-if-exists=.env src/server.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.131.0",
+    "express": "^5.1.0"
+  }
+}
