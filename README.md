@@ -27,10 +27,9 @@ cp .env.example .env      # then put your API key and a random WEBHOOK_SECRET in
 npm start
 ```
 
-Landbot must reach the server over public HTTPS, so deploy it to any Node
-host (Render, Railway, Fly.io, a VPS…). Set the same environment variables
-there. For quick local testing you can expose it with a tunnel such as
-`ngrok http 3000`.
+Landbot must reach the server over public HTTPS, so deploy it (see
+**Deploy to Vercel** below, or any Node host such as Render or Railway). For
+quick local testing you can expose it with a tunnel such as `ngrok http 3000`.
 
 Check it works:
 
@@ -39,6 +38,33 @@ curl -X POST http://localhost:3000/landbot/webhook \
   -H "content-type: application/json" -H "x-webhook-secret: YOUR_SECRET" \
   -d '{"message":"What instruments do you teach?","customer_id":"test-1","name":"Sam"}'
 ```
+
+## Deploy to Vercel
+
+The repo deploys to Vercel as-is: Vercel detects the Express app in
+`src/server.js` and runs it as a serverless function.
+
+1. **Merge into `main` first.** Vercel publishes the `main` branch at your
+   public URL. Other branches get preview links that sit behind a Vercel login,
+   so Landbot can't call them.
+2. Go to https://vercel.com/new, choose **Import Git Repository**, and pick
+   `NewWestMusic/ai-whatsapp-agent`. Leave the framework and build settings as detected.
+3. Under **Environment Variables**, add:
+   - `ANTHROPIC_API_KEY`: your key from https://console.anthropic.com
+   - `WEBHOOK_SECRET`: a long random string (the webhook refuses all requests
+     on Vercel until this is set)
+4. Click **Deploy**.
+5. **Add memory.** In the project, open **Storage** → **Create Database** →
+   **Upstash for Redis** (free tier is plenty) and connect it to the project.
+   This adds `KV_REST_API_URL` and `KV_REST_API_TOKEN` automatically. Without
+   it, the bot forgets the conversation between messages, because Vercel can
+   run each request on a fresh instance.
+6. **Redeploy** (Deployments → ⋯ → Redeploy) so the new variables take effect.
+7. Visit `https://YOUR-PROJECT.vercel.app/health`. It should show `{"ok":true}`.
+   Your Landbot webhook URL is `https://YOUR-PROJECT.vercel.app/landbot/webhook`.
+
+After this, every push to `main` redeploys automatically, including edits to
+`knowledge.md`.
 
 ## 3. Set up Landbot
 
@@ -86,8 +112,10 @@ The customer can type `reset` to clear their conversation memory.
 
 ## Notes
 
-- **Memory** is kept in RAM for 6 hours and the last 20 messages per customer.
-  It resets on restart. Swap `src/history.js` for Redis/a database if you need more.
+- **Memory** keeps the last 20 messages per customer for 6 hours. It uses
+  Upstash Redis when `KV_REST_API_URL`/`KV_REST_API_TOKEN` (or
+  `UPSTASH_REDIS_REST_URL`/`UPSTASH_REDIS_REST_TOKEN`) are set, and RAM otherwise
+  (fine on a single always-on server, lost on restart).
 - **Model**: `claude-opus-5-5` at low effort, which keeps replies quick. Change
   it with `CLAUDE_MODEL` in `.env`.
 - **Security**: always set `WEBHOOK_SECRET`, otherwise anyone who finds the URL

@@ -1,10 +1,8 @@
 import fs from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import Anthropic from "@anthropic-ai/sdk";
 
-const here = path.dirname(fileURLToPath(import.meta.url));
-const KNOWLEDGE_PATH = process.env.KNOWLEDGE_FILE || path.join(here, "..", "knowledge.md");
+// Written as a literal URL so Vercel's bundler sees knowledge.md and ships it.
+const DEFAULT_KNOWLEDGE = new URL("../knowledge.md", import.meta.url);
 
 export const MODEL = process.env.CLAUDE_MODEL || "claude-opus-5-5";
 export const HANDOFF_TOKEN = "[HANDOFF]";
@@ -12,8 +10,13 @@ export const HANDOFF_TOKEN = "[HANDOFF]";
 const FALLBACK_REPLY =
   "Sorry, I couldn't answer that just now. A member of our team will get back to you shortly.";
 
+let systemPrompt;
 function buildSystemPrompt() {
-  const knowledge = fs.readFileSync(KNOWLEDGE_PATH, "utf8");
+  systemPrompt ??= renderSystemPrompt(fs.readFileSync(process.env.KNOWLEDGE_FILE || DEFAULT_KNOWLEDGE, "utf8"));
+  return systemPrompt;
+}
+
+function renderSystemPrompt(knowledge) {
   return `You are the WhatsApp assistant for the business described below. You chat with customers on WhatsApp.
 
 How to reply:
