@@ -20,6 +20,8 @@ export class ConversationStore {
     this.maxMessages = maxMessages;
     this.ttlMs = ttlMs;
     this.conversations = new Map();
+    this.leadIds = new Map();
+    this.seenMessages = new Set();
   }
 
   async get(customerId) {
@@ -39,6 +41,23 @@ export class ConversationStore {
 
   async reset(customerId) {
     this.conversations.delete(customerId);
+  }
+
+  async getLeadId(customerId) {
+    return this.leadIds.get(customerId) ?? null;
+  }
+
+  async setLeadId(customerId, recordId) {
+    this.leadIds.set(customerId, recordId);
+  }
+
+  // True the first time a message id is seen. Meta retries webhooks, so this
+  // stops a customer getting the same answer twice.
+  async claimMessage(messageId) {
+    if (this.seenMessages.has(messageId)) return false;
+    this.seenMessages.add(messageId);
+    if (this.seenMessages.size > 5000) this.seenMessages.delete(this.seenMessages.values().next().value);
+    return true;
   }
 }
 
@@ -64,6 +83,19 @@ export class RedisConversationStore {
 
   async reset(customerId) {
     await this.redis.del(this.key(customerId));
+  }
+
+  async getLeadId(customerId) {
+    return (await this.redis.get(`whatsapp-agent:lead:${customerId}`)) ?? null;
+  }
+
+  async setLeadId(customerId, recordId) {
+    await this.redis.set(`whatsapp-agent:lead:${customerId}`, recordId, { ex: 90 * 24 * 60 * 60 });
+  }
+
+  async claimMessage(messageId) {
+    const result = await this.redis.set(`whatsapp-agent:seen:${messageId}`, 1, { nx: true, ex: 24 * 60 * 60 });
+    return result === "OK";
   }
 }
 

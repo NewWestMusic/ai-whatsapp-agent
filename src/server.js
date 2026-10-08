@@ -1,10 +1,13 @@
 import crypto from "node:crypto";
 import express from "express";
-import Anthropic from "@anthropic-ai/sdk";
-import { generateReply, FALLBACK_REPLY } from "./agent.js";
+import { waitUntil } from "@vercel/functions";
+import { handleCustomerMessage } from "./conversation.js";
 import { createStore } from "./history.js";
+import { AirtableLeads } from "./leads.js";
+import { WhatsAppClient, extractMessages, verifySignature } from "./whatsapp.js";
 
-const RESET_WORDS = new Set(["reset", "restart", "start over"]);
+const UNSUPPORTED_MEDIA_REPLY =
+  "Thanks! I can only read text messages at the moment. Could you type your question?";
 
 function secretMatches(provided, expected) {
   const a = Buffer.from(String(provided ?? ""));
@@ -14,59 +17,104 @@ function secretMatches(provided, expected) {
 
 export function createApp({
   store = createStore(),
-  replyFn = generateReply,
-  secret = process.env.WEBHOOK_SECRET,
-  requireSecret = Boolean(process.env.VERCEL),
+  leads = new AirtableLeads(),
+  whatsapp = new WhatsAppClient(),
+  replyFn,
+  env = process.env,
+  // On a public host, never run without authentication: anyone could spend your Claude credits.
+  requireSecrets = Boolean(env.VERCEL),
+  background = waitUntil,
 } = {}) {
   const app = express();
-  app.use(express.json({ limit: "100kb" }));
+  app.use(express.json({ limit: "1mb", verify: (req, _res, buf) => { req.rawBody = buf; } }));
 
   app.get("/health", (_req, res) => res.json({ ok: true }));
 
-  // Landbot "Webhook" block posts here. See README for the exact block setup.
+  // ---- WhatsApp Cloud API (Meta) ----------------------------------------
+
+  // Meta calls this once when you save the webhook URL in the app dashboard.
+  app.get("/whatsapp/webhook", (req, res) => {
+    const verifyToken = env.WHATSAPP_VERIFY_TOKEN;
+    if (
+      verifyToken &&
+      req.query["hub.mode"] === "subscribe" &&
+      secretMatches(req.query["hub.verify_token"], verifyToken)
+    ) {
+      return res.status(200).send(String(req.query["hub.challenge"] ?? ""));
+    }
+    return res.sendStatus(403);
+  });
+
+  app.post("/whatsapp/webhook", (req, res) => {
+    const appSecret = env.WHATSAPP_APP_SECRET;
+    if (!appSecret && requireSecrets) {
+      return res.status(500).json({ error: "WHATSAPP_APP_SECRET is not configured" });
+    }
+    if (appSecret && !verifySignature(req.rawBody, req.get("x-hub-signature-256"), appSecret)) {
+      return res.sendStatus(401);
+    }
+
+    // Acknowledge straight away (Meta retries slow webhooks) and reply in the background.
+    const messages = extractMessages(req.body);
+    res.sendStatus(200);
+    if (messages.length) background(processWhatsAppMessages(messages));
+  });
+
+  async function processWhatsAppMessages(messages) {
+    for (const msg of messages) {
+      try {
+        if (!(await store.claimMessage(msg.id))) continue; // duplicate delivery
+        whatsapp.markReadAndTyping(msg.id).catch((err) => console.warn("Typing indicator failed:", err.message));
+
+        if (!msg.text) {
+          await whatsapp.sendText(msg.from, UNSUPPORTED_MEDIA_REPLY);
+          continue;
+        }
+
+        const { reply } = await handleCustomerMessage({
+          store,
+          leads,
+          replyFn,
+          customerId: `wa:${msg.from}`,
+          phone: `+${msg.from}`,
+          name: msg.name,
+          text: msg.text,
+        });
+        await whatsapp.sendText(msg.from, reply);
+      } catch (err) {
+        console.error(`Failed to handle WhatsApp message ${msg.id}:`, err);
+      }
+    }
+  }
+
+  // ---- Landbot (optional) -----------------------------------------------
+
+  // Landbot "Webhook" block posts here. See README for the block setup.
   app.post("/landbot/webhook", async (req, res) => {
-    if (!secret && requireSecret) {
-      // On a public host, refuse to run open: anyone could spend your Claude credits.
+    const secret = env.WEBHOOK_SECRET;
+    if (!secret && requireSecrets) {
       return res.status(500).json({ error: "WEBHOOK_SECRET is not configured" });
     }
     if (secret && !secretMatches(req.get("x-webhook-secret"), secret)) {
       return res.status(401).json({ error: "unauthorized" });
     }
 
-    const message = String(req.body?.message ?? "").trim();
+    const text = String(req.body?.message ?? "").trim();
     const customerId = String(req.body?.customer_id ?? "").trim();
-    if (!message || !customerId) {
+    if (!text || !customerId) {
       return res.status(400).json({ error: "message and customer_id are required" });
     }
 
-    try {
-      if (RESET_WORDS.has(message.toLowerCase())) {
-        await store.reset(customerId);
-        return res.json({ reply: "No problem, let's start fresh. How can I help?", handoff: false });
-      }
-
-      const history = await store.get(customerId);
-      const name = String(req.body?.name ?? "").trim();
-      const userMessage = name && history.length === 0
-        ? `(Customer's name: ${name})\n${message}`
-        : message;
-
-      const { reply, handoff, ok } = await replyFn(history, userMessage);
-      if (ok) {
-        await store.append(customerId, { role: "user", content: userMessage }, { role: "assistant", content: reply });
-      }
-      return res.json({ reply, handoff });
-    } catch (err) {
-      if (err instanceof Anthropic.RateLimitError) {
-        console.warn("Claude rate limited:", err.message);
-      } else if (err instanceof Anthropic.APIError) {
-        console.error(`Claude API error ${err.status}:`, err.message);
-      } else {
-        console.error("Unexpected error:", err);
-      }
-      // Always give Landbot something to send, and route to a human.
-      return res.json({ reply: FALLBACK_REPLY, handoff: true });
-    }
+    const result = await handleCustomerMessage({
+      store,
+      leads,
+      replyFn,
+      customerId,
+      phone: /^\+?\d{7,15}$/.test(customerId) ? `+${customerId.replace(/^\+/, "")}` : undefined,
+      name: String(req.body?.name ?? "").trim(),
+      text,
+    });
+    return res.json(result);
   });
 
   return app;
@@ -77,9 +125,6 @@ const app = createApp();
 export default app;
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  if (!process.env.WEBHOOK_SECRET) {
-    console.warn("WEBHOOK_SECRET is not set: anyone who finds this URL can use your Claude credits.");
-  }
   const port = Number(process.env.PORT) || 3000;
   app.listen(port, () => console.log(`AI WhatsApp agent listening on port ${port}`));
 }

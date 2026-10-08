@@ -1,7 +1,7 @@
 {
   "name": "ai-whatsapp-agent",
   "version": "1.0.0",
-  "description": "AI brain for a Landbot WhatsApp bot, powered by Claude",
+  "description": "WhatsApp AI assistant for New West Music: WhatsApp Cloud API + Claude + Airtable leads",
   "type": "module",
   "main": "src/server.js",
   "scripts": {
@@ -15,6 +15,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.131.0",
     "@upstash/redis": "^1.39.0",
+    "@vercel/functions": "^3.9.11",
     "express": "^5.1.0"
   }
 }

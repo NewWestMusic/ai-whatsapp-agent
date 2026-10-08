@@ -1,124 +1,110 @@
-# AI WhatsApp agent (Landbot + Claude)
+# AI WhatsApp agent (WhatsApp Cloud API + Claude)
 
-Landbot runs your WhatsApp number and the conversation flow. When a customer
-asks something your flow can't answer, a Landbot **Webhook block** sends the
-message to this small server. The server asks Claude for a reply using your
-business information in `knowledge.md`, and Landbot sends that reply on WhatsApp.
+A WhatsApp assistant for New West Music. Customers message your WhatsApp
+number, Meta forwards each message to this server, Claude writes the reply
+using `knowledge.md`, and the server sends it back on WhatsApp.
+
+Along the way the assistant:
+
+- **records leads** in the **WhatsApp Leads** table (Airtable base
+  "Facebook Lead Forms Tracker"), one row per WhatsApp number, updated as it
+  learns the student's name, age, instrument and preferred times;
+- **offers two ways to book a demo**: the right teacher's Google Calendar
+  booking link, or "leave your details and the team sends options";
+- **flags conversations for staff** (refunds, billing, complaints, anything
+  it can't answer) by ticking *Needs Team Follow-up* on the lead with a reason.
 
 ```
-Customer on WhatsApp ──▶ Landbot flow ──▶ Webhook block ──▶ this server ──▶ Claude
-                                ▲                                   │
-                                └──────────── { reply, handoff } ◀──┘
+Customer ──WhatsApp──▶ Meta Cloud API ──webhook──▶ this server (Vercel) ──▶ Claude
+                                                        │
+                                                        ├──▶ Airtable: WhatsApp Leads
+                                                        └──▶ reply via Meta Cloud API
 ```
 
-## 1. Fill in your business information
+The old Landbot endpoint (`/landbot/webhook`) still works if you ever go back
+to Landbot; it shares the same brain and lead capture.
 
-Edit `knowledge.md`. The agent only answers from what's in this file, so add
-your rates, policies, hours, booking link and common questions. If it doesn't
-know an answer, it says so and hands the chat to your team rather than guessing.
+## What you need
 
-## 2. Run the server
+| Thing | Where | Env var |
+|---|---|---|
+| Anthropic API key | console.anthropic.com → API Keys (billed separately from a claude.ai plan) | `ANTHROPIC_API_KEY` |
+| Meta app secret | Meta app → App settings → Basic → App secret | `WHATSAPP_APP_SECRET` |
+| WhatsApp access token (permanent) | Business Settings → System users (see below) | `WHATSAPP_TOKEN` |
+| Phone number ID | Meta app → WhatsApp → API Setup | `WHATSAPP_PHONE_NUMBER_ID` |
+| Webhook verify token | Any random string you make up | `WHATSAPP_VERIFY_TOKEN` |
+| Airtable token | airtable.com/create/tokens | `AIRTABLE_TOKEN` |
+| Redis (conversation memory) | Vercel → Storage → Upstash for Redis | `KV_REST_API_URL`, `KV_REST_API_TOKEN` (added automatically) |
 
-You need Node.js 22+ and an Anthropic API key (https://console.anthropic.com).
+## Setup
 
-```bash
-npm install
-cp .env.example .env      # then put your API key and a random WEBHOOK_SECRET in .env
-npm start
-```
+### 1. Airtable token
+1. Go to https://airtable.com/create/tokens → **Create token**.
+2. Scopes: `data.records:read` and `data.records:write`.
+3. Access: only the **Facebook Lead Forms Tracker** base.
+4. Copy the token into Vercel as `AIRTABLE_TOKEN`.
 
-Landbot must reach the server over public HTTPS, so deploy it (see
-**Deploy to Vercel** below, or any Node host such as Render or Railway). For
-quick local testing you can expose it with a tunnel such as `ngrok http 3000`.
+### 2. Meta app and WhatsApp number
+1. At https://developers.facebook.com → **My Apps → Create app**, choose the
+   WhatsApp use case and connect it to your (verified) business portfolio.
+2. In **WhatsApp → API Setup**, add your business phone number and verify it
+   by SMS or call. The number can't be active on the regular WhatsApp or
+   WhatsApp Business app at the same time; delete that WhatsApp account on
+   the phone first. Copy the **Phone number ID** into `WHATSAPP_PHONE_NUMBER_ID`.
+3. **Permanent token:** in Meta Business Settings → **Users → System users**,
+   add a system user (Admin), assign it your app and WhatsApp account with
+   full control, then **Generate token** for the app with the permissions
+   `whatsapp_business_messaging` and `whatsapp_business_management`. Put it in
+   `WHATSAPP_TOKEN`. (The temporary token on the API Setup page expires in 24 hours.)
+4. Copy **App settings → Basic → App secret** into `WHATSAPP_APP_SECRET`.
+5. Add a payment method to the WhatsApp account (WhatsApp Manager → Payment
+   settings). Replies to customers who message you first are free within the
+   24-hour window, but Meta requires one on file.
 
-Check it works:
+### 3. Vercel
+1. Add all the env vars above (Settings → Environment Variables, Production)
+   and redeploy.
+2. Check https://ai-whatsapp-agent-eight.vercel.app/health shows `{"ok":true}`.
 
-```bash
-curl -X POST http://localhost:3000/landbot/webhook \
-  -H "content-type: application/json" -H "x-webhook-secret: YOUR_SECRET" \
-  -d '{"message":"What instruments do you teach?","customer_id":"test-1","name":"Sam"}'
-```
+### 4. Connect the webhook
+1. In the Meta app: **WhatsApp → Configuration → Webhook → Edit**.
+2. Callback URL: `https://ai-whatsapp-agent-eight.vercel.app/whatsapp/webhook`
+3. Verify token: your `WHATSAPP_VERIFY_TOKEN`. Click **Verify and save**.
+4. Under **Webhook fields**, subscribe to **messages**.
+5. Set the app to **Live** (App Mode toggle / Publish) so real customers can reach it.
 
-## Deploy to Vercel
+### 5. Test
+Message the number from your own phone:
+- "Hi, do you teach piano for a 6 year old?" → the bot offers a teacher's
+  booking link or to have the team send options, and a row appears in
+  **WhatsApp Leads**.
+- "I'd like a refund" → *Needs Team Follow-up* gets ticked with a reason.
 
-The repo deploys to Vercel as-is: Vercel detects the Express app in
-`src/server.js` and runs it as a serverless function.
+If nothing comes back, check Vercel → **Logs**. Common causes: wrong
+`WHATSAPP_APP_SECRET` (401s), an expired token (WhatsApp API 401), or the
+webhook not subscribed to **messages**.
 
-1. **Check the production branch.** Vercel publishes the repo's default branch
-   at your public URL. Other branches get preview links that sit behind a
-   Vercel login, so Landbot can't call them. Make sure the code is on the
-   default branch (GitHub → Settings → General → Default branch).
-2. Go to https://vercel.com/new, choose **Import Git Repository**, and pick
-   `NewWestMusic/ai-whatsapp-agent`. Leave the framework and build settings as detected.
-3. Under **Environment Variables**, add:
-   - `ANTHROPIC_API_KEY`: your key from https://console.anthropic.com
-   - `WEBHOOK_SECRET`: a long random string (the webhook refuses all requests
-     on Vercel until this is set)
-4. Click **Deploy**.
-5. **Add memory.** In the project, open **Storage** → **Create Database** →
-   **Upstash for Redis** (free tier is plenty) and connect it to the project.
-   This adds `KV_REST_API_URL` and `KV_REST_API_TOKEN` automatically. Without
-   it, the bot forgets the conversation between messages, because Vercel can
-   run each request on a fresh instance.
-6. **Redeploy** (Deployments → ⋯ → Redeploy) so the new variables take effect.
-7. Visit `https://YOUR-PROJECT.vercel.app/health`. It should show `{"ok":true}`.
-   Your Landbot webhook URL is `https://YOUR-PROJECT.vercel.app/landbot/webhook`.
+## Day to day
 
-After this, every push to the default branch redeploys automatically, including edits to
-`knowledge.md`.
-
-## 3. Set up Landbot
-
-1. **Connect WhatsApp.** Create a WhatsApp bot in Landbot and connect your
-   WhatsApp Business number (Landbot walks you through this under the WhatsApp channel setup).
-2. **Capture the message.** Add a *Question* block (text type) and save the
-   answer to a variable, e.g. `@user_message`.
-3. **Add a Webhook block** after it:
-   - Method: `POST`
-   - URL: `https://YOUR-SERVER/landbot/webhook`
-   - Headers: `x-webhook-secret` = the `WEBHOOK_SECRET` from your `.env`
-   - Body (customize body):
-     ```json
-     {
-       "message": "@user_message",
-       "customer_id": "@phone",
-       "name": "@name"
-     }
-     ```
-   - Save responses: map `reply` → `@ai_reply` and `handoff` → `@ai_handoff`.
-4. **Send the reply.** Add a *Send a message* block with the text `@ai_reply`.
-5. **Branch on handoff.** Add a *Conditions* block: if `@ai_handoff` is `true`,
-   route to your human-takeover / notify-team step; otherwise loop back to the
-   Question block so the customer can keep chatting.
-
-Landbot's WhatsApp variable names can differ slightly between accounts. Use
-whichever variable holds the customer's phone number as `customer_id`: it's
-how the server keeps each person's conversation separate.
-
-## API
-
-`POST /landbot/webhook`
-
-| Field         | Required | Meaning                                      |
-|---------------|----------|----------------------------------------------|
-| `message`     | yes      | What the customer wrote                      |
-| `customer_id` | yes      | Stable id per customer (their phone number)  |
-| `name`        | no       | Customer's name, used for a friendlier reply |
-
-Response: `{ "reply": "...", "handoff": false }`. `handoff` is `true` when the
-agent thinks a person should take over (payments, complaints, unknown answers,
-or an API error).
-
-The customer can type `reset` to clear their conversation memory.
+- **Knowledge, prices, policies, booking links:** edit `knowledge.md`. Every
+  push redeploys automatically. Send only one teacher link per reply; the
+  bot is told never to send the whole list or the master calendar.
+- **Leads:** watch the WhatsApp Leads table. Filter on *Needs Team Follow-up*
+  for chats that need a person, and *Booking Path = Team to send options* for
+  families waiting for times.
+- **Replying as a person:** the WhatsApp Cloud API has no inbox of its own,
+  so staff follow up by phone or email from the lead row. If you want staff to
+  reply inside WhatsApp, look into a shared inbox tool, or WhatsApp's
+  "coexistence" setup that lets the WhatsApp Business app and the API share a number.
+- A customer can type `reset` to clear their conversation memory.
 
 ## Notes
 
-- **Memory** keeps the last 20 messages per customer for 6 hours. It uses
-  Upstash Redis when `KV_REST_API_URL`/`KV_REST_API_TOKEN` (or
-  `UPSTASH_REDIS_REST_URL`/`UPSTASH_REDIS_REST_TOKEN`) are set, and RAM otherwise
-  (fine on a single always-on server, lost on restart).
-- **Model**: `claude-opus-5-5` at low effort, which keeps replies quick. Change
-  it with `CLAUDE_MODEL` in `.env`.
-- **Security**: always set `WEBHOOK_SECRET`, otherwise anyone who finds the URL
-  can spend your API credits.
-- Run tests with `npm test`.
+- **Memory:** last 20 messages per customer for 6 hours, in Upstash Redis
+  (falls back to RAM when Redis isn't configured, e.g. local dev).
+- **Model:** `claude-opus-5-5` at low effort, for quick replies. Override with `CLAUDE_MODEL`.
+- **Security:** the WhatsApp webhook only accepts requests signed with your
+  Meta app secret, and the server refuses to run on Vercel without it.
+- **Local dev:** `npm install`, copy `.env.example` to `.env`, `npm run dev`,
+  and expose port 3000 with a tunnel (e.g. `ngrok http 3000`) for Meta.
+- **Tests:** `npm test`.
