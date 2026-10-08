@@ -60,6 +60,13 @@ const fakeClient = (...responses) => {
   };
 };
 
+test("serves the privacy policy", async () => {
+  const res = await request(createApp({ env: {} }), "GET", "/privacy");
+  assert.equal(res.status, 200);
+  assert.match(res.text, /Privacy Policy/);
+  assert.match(res.text, /How to delete your data/);
+});
+
 // ---- Landbot ------------------------------------------------------------
 
 test("landbot: rejects requests without the shared secret", async () => {

@@ -1,10 +1,15 @@
 import crypto from "node:crypto";
+import fs from "node:fs";
 import express from "express";
 import { waitUntil } from "@vercel/functions";
 import { handleCustomerMessage } from "./conversation.js";
 import { createStore } from "./history.js";
 import { AirtableLeads } from "./leads.js";
 import { WhatsAppClient, extractMessages, verifySignature } from "./whatsapp.js";
+
+// Written as a literal URL so Vercel's bundler ships the file. Meta requires a
+// privacy policy URL before an app can be published.
+const PRIVACY_POLICY = new URL("../public/privacy.html", import.meta.url);
 
 const UNSUPPORTED_MEDIA_REPLY =
   "Thanks! I can only read text messages at the moment. Could you type your question?";
@@ -29,6 +34,12 @@ export function createApp({
   app.use(express.json({ limit: "1mb", verify: (req, _res, buf) => { req.rawBody = buf; } }));
 
   app.get("/health", (_req, res) => res.json({ ok: true }));
+
+  let privacyHtml;
+  app.get(["/privacy", "/privacy.html"], (_req, res) => {
+    privacyHtml ??= fs.readFileSync(PRIVACY_POLICY, "utf8");
+    res.type("html").send(privacyHtml);
+  });
 
   // ---- WhatsApp Cloud API (Meta) ----------------------------------------
 
