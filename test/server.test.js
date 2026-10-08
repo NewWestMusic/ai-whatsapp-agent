@@ -160,6 +160,25 @@ test("whatsapp: signature check", () => {
   assert.equal(verifySignature(raw, undefined, APP_SECRET), false);
 });
 
+test("status page needs the key and reports each connection", async () => {
+  const store = new ConversationStore();
+  const whatsapp = { ...fakeWhatsApp(), checkPhoneNumber: async () => { throw new Error("Invalid OAuth access token"); } };
+  const app = createApp({
+    store, whatsapp, leads: { enabled: false },
+    env: { WHATSAPP_VERIFY_TOKEN: "vt", WHATSAPP_APP_SECRET: APP_SECRET },
+    claudeCheck: async () => "API key works",
+    background: () => {},
+  });
+  assert.equal((await request(app, "GET", "/status")).status, 403);
+  await store.setStatus("webhook", { at: "now", result: "accepted" });
+  const res = await request(app, "GET", "/status?key=vt");
+  assert.equal(res.status, 200);
+  assert.match(res.text, /Claude: OK: API key works/);
+  assert.match(res.text, /WhatsApp: PROBLEM: Invalid OAuth access token/);
+  assert.match(res.text, /AIRTABLE_TOKEN: MISSING/);
+  assert.match(res.text, /Last message from Meta: .*accepted/);
+});
+
 // ---- Claude + tools -------------------------------------------------------
 
 test("generateReply runs save_lead, then returns the final text", async () => {

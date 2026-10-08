@@ -46,6 +46,13 @@ export class AirtableLeads {
     return Boolean(this.token);
   }
 
+  /** Confirms the token can read the WhatsApp Leads table. Used by /status. */
+  async check() {
+    const res = await this.fetch(`${this.url}?maxRecords=1`, { headers: { Authorization: `Bearer ${this.token}` } });
+    if (!res.ok) throw new Error(`Airtable ${res.status}: ${(await res.text()).slice(0, 200)}`);
+    return "can read the WhatsApp Leads table";
+  }
+
   /**
    * Create the lead, or update it if this customer already has one.
    * @returns {Promise<string>} the Airtable record id

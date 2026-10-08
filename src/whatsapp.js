@@ -59,7 +59,8 @@ export class WhatsAppClient {
     fetchFn = fetch,
   } = {}) {
     this.token = token;
-    this.url = `https://graph.facebook.com/${GRAPH_VERSION}/${phoneNumberId}/messages`;
+    this.phoneUrl = `https://graph.facebook.com/${GRAPH_VERSION}/${phoneNumberId}`;
+    this.url = `${this.phoneUrl}/messages`;
     this.fetch = fetchFn;
   }
 
@@ -71,6 +72,16 @@ export class WhatsAppClient {
     });
     if (!res.ok) throw new Error(`WhatsApp API ${res.status}: ${(await res.text()).slice(0, 500)}`);
     return res.json();
+  }
+
+  /** Confirms the token and phone number ID work. Used by /status. */
+  async checkPhoneNumber() {
+    const res = await this.fetch(`${this.phoneUrl}?fields=display_phone_number,verified_name`, {
+      headers: { Authorization: `Bearer ${this.token}` },
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body?.error?.message ?? `HTTP ${res.status}`);
+    return `${body.verified_name ?? "?"} (${body.display_phone_number ?? "?"})`;
   }
 
   sendText(to, text) {

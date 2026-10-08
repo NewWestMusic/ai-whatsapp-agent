@@ -47,6 +47,6 @@ export async function handleCustomerMessage({ store, leads, replyFn = defaultRep
     return { reply, handoff };
   } catch (err) {
     console.error("Failed to generate a reply:", err);
-    return { reply: FALLBACK_REPLY, handoff: true };
+    return { reply: FALLBACK_REPLY, handoff: true, error: err.message };
   }
 }

@@ -22,6 +22,15 @@ export class ConversationStore {
     this.conversations = new Map();
     this.leadIds = new Map();
     this.seenMessages = new Set();
+    this.status = new Map();
+  }
+
+  async setStatus(key, value) {
+    this.status.set(key, value);
+  }
+
+  async getStatus(key) {
+    return this.status.get(key) ?? null;
   }
 
   async get(customerId) {
@@ -91,6 +100,14 @@ export class RedisConversationStore {
 
   async setLeadId(customerId, recordId) {
     await this.redis.set(`whatsapp-agent:lead:${customerId}`, recordId, { ex: 90 * 24 * 60 * 60 });
+  }
+
+  async setStatus(key, value) {
+    await this.redis.set(`whatsapp-agent:status:${key}`, value, { ex: 30 * 24 * 60 * 60 });
+  }
+
+  async getStatus(key) {
+    return (await this.redis.get(`whatsapp-agent:status:${key}`)) ?? null;
   }
 
   async claimMessage(messageId) {

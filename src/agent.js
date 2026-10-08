@@ -168,3 +168,9 @@ async function runTool(use, actions) {
 }
 
 export { FALLBACK_REPLY };
+
+/** Confirms the API key works and can use the model. Used by /status. */
+export async function checkClaude({ client = defaultClient() } = {}) {
+  const model = await client.models.retrieve(MODEL);
+  return `API key works, model ${model.id} available`;
+}
